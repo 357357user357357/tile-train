@@ -23,7 +23,20 @@
 - [ ] H100 port: sm_90 paths (wgmma/TMA where it matters), verify on rented H100
 
 ## Phase 3 — Scale-out & decentralization
-- [ ] DDP via NCCL (tch-rs) — 2+ GPUs
+- [x] **Decentralized DDP with own runtime (no NCCL):** `tile-dist` crate —
+  TCP ring all-reduce (reduce-scatter + all-gather), coord/worker control
+  protocol, data-parallel replicas; 2 worker processes verified on the 50HX
+  (loss 6.5 → 0.00097, bit-identical replica checksums, 16/16 greedy).
+  Evidence: `docs/phase3_ddp_50hx.log`
+- [ ] Sharded data parallel (ZeRO-style param/grad/opt-state sharding via
+  `ShardId` addressing) — next
+- [ ] Multi-GPU on one node (ring over CUDA IPC/P2P instead of loopback TCP)
 - [ ] Tensor parallel attention/MLP (tile-style sharding)
-- [ ] Decentralized training track: gradient/optimizer-state sync over CubeCL's multi-GPU runtime; DiLoCo-style local-step + periodic-sync candidate
+- [ ] Decentralized training track: K-trajectory gossip for trustless peers;
+  DiLoCo-style local-step + periodic-sync candidate
+- [ ] Per-peer gradient validation (norm bounds) + signed checkpoints —
+  runtime policy, not docs (ADR-0002 §4)
+- [ ] Robustness: read timeouts / run-level watchdog on control + ring planes
+  (a hung worker currently hangs the run); listen-host as a parameter before
+  leaving loopback
 - [ ] Paged KV + inference interop with TileRT (shared checkpoint format)

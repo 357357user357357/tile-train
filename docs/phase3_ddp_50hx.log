@@ -1,0 +1,25 @@
+    Finished `release` profile [optimized] target(s) in 0.11s
+     Running `target/release/examples/ddp_tiny_gpt --workers 2 --steps 500`
+[coord] listening on 127.0.0.1:9123, expecting 2 workers, 500 steps
+[worker] rank 1/2 starting, device=Cuda(0)
+[worker] rank 0/2 starting, device=Cuda(0)
+[coord] step    0  mean loss 6.519457
+[coord] step   50  mean loss 0.040277
+[coord] step  100  mean loss 0.009173
+[coord] step  150  mean loss 0.005023
+[coord] step  200  mean loss 0.003335
+[coord] step  250  mean loss 0.002430
+[coord] step  300  mean loss 0.001900
+[coord] step  350  mean loss 0.001498
+[coord] step  400  mean loss 0.001222
+[coord] step  450  mean loss 0.001042
+[worker] rank 1 done, last loss 0.000906
+[worker 1] summary: WorkerSummary { rank: 1, last_loss: 0.0009060570155270398, checksum: 19431.8718788051 }
+[worker 0] greedy continuation: 16/16 correct
+[worker] rank 0 done, last loss 0.000912
+[worker 0] summary: WorkerSummary { rank: 0, last_loss: 0.0009118714951910079, checksum: 19431.8718788051 }
+[coord] checksums: [19431.8718788051, 19431.8718788051]  replicas_synced=true
+
+[coord] mean loss 6.519457 -> 0.000909 over 500 steps
+[coord] checksums: [19431.8718788051, 19431.8718788051]
+PHASE-3 PASS: 2 worker processes trained one model in sync via TCP ring all-reduce

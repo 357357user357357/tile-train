@@ -1,0 +1,15 @@
+[package]
+name = "tile-dist"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decentralized training topology for tile-train: worker protocol + ring all-reduce (ADR-0002)"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tile-train-core = { path = "../tile-train-core" }
+# Workers pack tch tensors into the all-reduce buffers.
+tch = "0.18"

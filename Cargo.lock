@@ -4023,6 +4023,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tile-dist"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tch",
+ "tile-train-core",
+]
+
+[[package]]
 name = "tile-train-core"
 version = "0.1.0"
 dependencies = [

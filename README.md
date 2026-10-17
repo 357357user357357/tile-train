@@ -32,9 +32,22 @@ CUDA arch flags: `sm_75` now, `sm_90` later (CUDA 12.4 on the dev box supports b
 
 ## Status
 
-🚧 Early scaffold. Design decisions are being recorded in [docs/adr/](docs/adr/).
-
-- [ADR-0001 — Backend strategy: tch-rs vs burn vs raw CUDA](docs/adr/0001-backend-strategy.md) — proposed, spike in progress
+- **Phase 1 — trainer on tch-rs: DONE.** Tiny GPT (2-layer, 64-embd) trains on
+  the CMP 50HX: loss 6.4 → 0.001 in 500 steps, greedy continuation reproduces
+  the counting rule. Validated off-machine on vast.ai RTX 4060 Ti too.
+  Run: `cargo run --release --example train_tiny_gpt`
+- **Phase 2 — CubeCL spike: DONE.** One custom kernel compiled and run on the
+  50HX (Turing) and cross-arch on an RTX 4060 Ti (Ada) — same kernel, PASS
+  both. CubeCL stays scoped to the custom-kernel layer; tch/libtorch remains
+  the training workhorse.
+- **Phase 3 — decentralized training, first increment: DONE.** `tile-dist`
+  crate: hand-rolled TCP ring all-reduce (reduce-scatter + all-gather), a
+  coordinator/worker control protocol, and data-parallel training of identical
+  replicas — 2 worker processes on the 50HX, loss 6.5 → 0.00097, replica
+  checksums bit-identical, no NCCL, no parameter server (ADR-0002).
+  Run: `cargo run --release --example ddp_tiny_gpt -p tile-dist -- --workers 2`
+- ADRs: [0001 — backend strategy](docs/adr/0001-backend-strategy.md),
+  [0002 — decentralized topology](docs/adr/0002-decentralized-training-topology.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Building
