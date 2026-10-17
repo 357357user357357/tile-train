@@ -1,0 +1,8 @@
+/target
+Cargo.lock.orig
+*.pt
+*.safetensors
+*.ckpt
+data/
+wandb/
+__pycache__/

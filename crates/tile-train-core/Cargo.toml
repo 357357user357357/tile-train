@@ -1,0 +1,16 @@
+[package]
+name = "tile-train-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Training-capable tensor ops and training loop for tile-train"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+# Backend strategy: see docs/adr/0001-backend-strategy.md.
+# tch (libtorch bindings) is added in the Phase-0 spike, not scaffolded here,
+# so `cargo build` stays fast and CPU-only until the ADR is accepted.
