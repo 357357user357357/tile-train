@@ -19,6 +19,11 @@
 - [ ] CubeCL spike: compile + run one kernel on CMP 50HX (CUDA target only — no Apple/wgpu targets)
 - [ ] Fused RMSNorm forward+backward (CubeCL)
 - [ ] FlashAttention-style tiled attention forward (sm_75) + backward
+- [ ] Apex-equivalent fused utilities on Rust (no Python Apex dependency):
+  fused optimizers (Phase-2 Fused AdamW, Muon NS kernel), fused norms
+  (Phase-2 RMSNorm fwd+bwd), fused loss scaling / grad-clip kernels, fused
+  ternary quantize for BitLinear — all expressed as CubeCL kernels with
+  libtorch fallbacks, verified against the tch reference on sm_75 and sm_90
 - [ ] Fused AdamW
 - [ ] H100 port: sm_90 paths (wgmma/TMA where it matters), verify on rented H100
 
@@ -36,6 +41,9 @@
   Evidence: `docs/phase3_zero1_50hx.log`
 - [ ] ZeRO-2: reduce-scatter gradients instead of full all-reduce (grad
   memory ÷ N); reuses the same `ShardId` + ring primitives
+- [ ] ZeRO-3: shard the *parameters* too (weight all-gather per layer before
+  forward, freed after backward) — full ZeRO-3 memory profile; the restore
+  item above is specified against this stage as the minimum coverage
 - [ ] Muon optimizer (momentum + Newton–Schulz orthogonalization of 2D
   updates; AdamW for 1D params). Fits the ring: momentum is all-reduced in
   full, NS is deterministic → every rank computes the same orthogonalized
@@ -61,4 +69,12 @@
 - [ ] Multi-node launcher (optional): Kubernetes manifests for coord Service
   + workers Job with headless-DNS peer discovery — k8s may *launch* workers
   but must never be in the training topology (decentralization survives its
-  disappearance; ADR-0002 §3)
+  disappearance; ADR-0002 §3). Interesting base: user's fork
+  https://github.com/357357user357357/kubernetes
+- [ ] Launcher shard/flow restore (ZeRO-3 coverage **at least**): workers may
+  rejoin mid-run and recover their `ShardId`-addressed state from the latest
+  signed checkpoint + a replayable step/flow journal — params, optimizer
+  shards, and (at ZeRO-3) parameter shards re-gathered via the ring; a
+  restarted worker must re-enter the ring without a full restart, and the
+  run must survive both coord and worker restarts. Runtime policy, not docs
+  (ADR-0002 §3/§4)
