@@ -11,7 +11,7 @@ We need a Rust repo that can **train** LLMs, not just run inference.
 - Current dev GPU: **CMP 50HX** — Turing, compute capability **7.5**, 10 GB VRAM.
 - Near-future GPU: **H100** — Hopper, compute capability **9.0**.
 - CUDA toolchain on dev box: **12.4** (supports both sm_75 and sm_90).
-- Existing ecosystem: [TileRT](https://github.com/357357user357357/TileRT) (fork of Tile-ai's inference runtime) is inference-oriented; TileOPs/TileLang are Python-side. Training must be native to this repo.
+- Existing ecosystem: [TileRT](https://github.com/tile-ai/TileRT) (ultra-low-latency inference) — verified 2026-10-17: its public repo is Python orchestration + **closed prebuilt** `.so` backends (`libtilert_dsv32.so`, `libtilert_glm5.so`), so it cannot be forked as code. Its **MIT-licensed reference kernels** (`tilert/models/deepseek_v3_2/refs/kernel.py`) and architecture (tile-based, model co-design, MTP) serve as the design spec tile-train re-implements in Rust. Training must be native to this repo.
 
 ## Options
 
@@ -37,9 +37,28 @@ We need a Rust repo that can **train** LLMs, not just run inference.
 
 **Rejected for now:** pure burn (GPU risk on CC 7.5), pure raw CUDA (no autograd, too slow to first training run).
 
-## Spike (exit criterion for this ADR)
+## Spike result (2026-10-17) — **ACCEPTED**
 
-A minimal loss-decrease test on the CMP 50HX: train a tiny MLP on synthetic data for ~1000 steps with tch-rs, confirm (a) CUDA device is used, (b) loss decreases, (c) VRAM stays bounded. Record results here.
+Spike run on the CMP 50HX (`examples/spike_mlp.rs`, tch 0.18.1 + conda libtorch 2.5.1+cu121):
+
+- CUDA device used: yes (device 0 of 2)
+- Loss: 0.1450 → 0.000001 over 1000 Adam steps (>10x, actually >10^4x)
+- VRAM: bounded ~198 MB throughout
+- **Verdict: PASS — Phase 1 backend is tch-rs.**
+
+Build notes (conda libtorch, old C++ ABI):
+- `LIBTORCH_CXX11_ABI=0` required (conda-forge torch builds use the legacy ABI; pypi wheels use the new one).
+- `libtorch_cuda.so` must be loaded explicitly (`tile_train_core::ensure_cuda_backend()` dlopens it) — `--as-needed` drops it otherwise since the C API lives in `libtorch_cpu.so`.
+- pip-style nvidia wheels (`site-packages/nvidia/*/lib`) must be on `LD_LIBRARY_PATH`.
+
+## Phase-2 kernel language — CubeCL
+
+**Decision:** use [CubeCL](https://github.com/tracel-ai/cubecl) as the kernel language for custom tiled ops (Phase 2), replacing the earlier idea of hand-written cudarc/PTX.
+
+- Targets CUDA + HIP natively; WGPU/Metal targets exist but are **out of scope** (no Apple support needed).
+- Rust-native kernel authoring with autotune — the TileLang-style "tile-first" workflow without leaving Rust.
+- Multi-GPU runtime abstraction supports future decentralized/distributed training directions.
+- Burn's tensor layer sits on CubeCL, so burn remains an optional higher-level layer, not a requirement.
 
 ## Consequences
 

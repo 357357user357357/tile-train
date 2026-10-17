@@ -14,14 +14,16 @@
 - [ ] Checkpoint save/load (safetensors-compatible format)
 - [ ] Smoke train: tiny shakespeare or gsm8k-style task, loss curve recorded
 
-## Phase 2 — Custom tiled CUDA ops (the TileLang spirit, in Rust)
+## Phase 2 — Custom tiled CUDA ops (CubeCL, the TileLang spirit, in Rust)
 - [ ] Op trait seam; benchmark harness (vs libtorch baseline)
-- [ ] Fused RMSNorm forward+backward
+- [ ] CubeCL spike: compile + run one kernel on CMP 50HX (CUDA target only — no Apple/wgpu targets)
+- [ ] Fused RMSNorm forward+backward (CubeCL)
 - [ ] FlashAttention-style tiled attention forward (sm_75) + backward
 - [ ] Fused AdamW
 - [ ] H100 port: sm_90 paths (wgmma/TMA where it matters), verify on rented H100
 
-## Phase 3 — Scale-out
+## Phase 3 — Scale-out & decentralization
 - [ ] DDP via NCCL (tch-rs) — 2+ GPUs
 - [ ] Tensor parallel attention/MLP (tile-style sharding)
+- [ ] Decentralized training track: gradient/optimizer-state sync over CubeCL's multi-GPU runtime; DiLoCo-style local-step + periodic-sync candidate
 - [ ] Paged KV + inference interop with TileRT (shared checkpoint format)

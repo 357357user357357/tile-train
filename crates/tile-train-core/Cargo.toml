@@ -10,7 +10,9 @@ description = "Training-capable tensor ops and training loop for tile-train"
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+libc = "0.2"
 
-# Backend strategy: see docs/adr/0001-backend-strategy.md.
-# tch (libtorch bindings) is added in the Phase-0 spike, not scaffolded here,
-# so `cargo build` stays fast and CPU-only until the ADR is accepted.
+# Phase-0 spike backend (ADR-0001): libtorch bindings.
+# tch 0.18 / torch-sys 0.18 targets libtorch 2.5.0 = matches the conda `tilelang`
+# env's PyTorch 2.5.1+cu121 (patch-compatible), reused via LIBTORCH env vars.
+tch = "0.18"
