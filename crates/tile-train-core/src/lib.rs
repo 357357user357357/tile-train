@@ -11,6 +11,14 @@ pub trait Op {
     fn name(&self) -> &'static str;
 }
 
+pub mod config;
+pub mod model;
+pub mod train;
+
+pub use config::GptConfig;
+pub use model::TinyGpt;
+pub use train::{CheckpointMeta, StepLog};
+
 /// Make the libtorch CUDA backend visible to the process.
 ///
 /// When linking against a prebuilt libtorch (e.g. a conda PyTorch install),

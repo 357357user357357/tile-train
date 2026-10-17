@@ -6,3 +6,4 @@ Cargo.lock.orig
 data/
 wandb/
 __pycache__/
+out/

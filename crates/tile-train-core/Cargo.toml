@@ -10,6 +10,7 @@ description = "Training-capable tensor ops and training loop for tile-train"
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 libc = "0.2"
 
 # Phase-0 spike backend (ADR-0001): libtorch bindings.

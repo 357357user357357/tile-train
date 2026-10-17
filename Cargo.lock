@@ -623,6 +623,7 @@ dependencies = [
  "anyhow",
  "libc",
  "serde",
+ "serde_json",
  "tch",
  "thiserror 2.0.21",
 ]
