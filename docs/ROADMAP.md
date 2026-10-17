@@ -48,9 +48,16 @@
   updates; AdamW for 1D params). Fits the ring: momentum is all-reduced in
   full, NS is deterministic → every rank computes the same orthogonalized
   update, param shards all-gather as in ZeRO-1
-- [ ] BitLinear b1.58 (ternary {-1,0,+1} weights, absmean scale, STE QAT,
-  fp32 master weights) — memory *and* ring-traffic win; follow-up: 1-bit
-  gradient compression for the all-reduce (1-bit-SGD/PowerSGD style)
+- [x] BitLinear b1.58 (ternary {-1,0,+1} weights, absmean scale, STE QAT,
+  fp32 master weights) — **DONE (QAT surface)**. `tile-train-core/src/bit_linear.rs`
+  + `GptConfig::bit_linear` flag; attention qkv/out and MLP fc/proj ternarized,
+  embeddings/LM head/LayerNorms stay fp32. A/B on the 50HX (500 steps, seed 42,
+  identical batches): fp32 6.516677 → 0.001017, ternary 6.498903 → 0.001138,
+  greedy 16/16 both — ternarization costs ~12% final loss at this scale, both
+  arms learn the rule. Evidence: `docs/phase4_bitlinear_50hx.log`
+  Follow-ups: true 1.58-bit *storage* (packed ternary checkpoints), ternary
+  matmul CubeCL kernels (throughput), 1-bit gradient compression for the
+  all-reduce (1-bit-SGD/PowerSGD style)
 - [ ] Lorentz-metric experiment (hyperbolic distances via Minkowski form,
   e.g. for embeddings) — flagged A/B, keep only if the loss curve justifies it
 - [ ] Model modernization flags (modded-nanogpt practices, each A/B-measured
@@ -66,6 +73,15 @@
   (a hung worker currently hangs the run); listen-host as a parameter before
   leaving loopback
 - [ ] Paged KV + inference interop with TileRT (shared checkpoint format)
+- [ ] Future application: HFT signal integration — a small model trained
+  from zero (tile-train) on market sequences (orderbook/kline streams) runs
+  as an inference service (TileRT-style runtime, shared checkpoint format)
+  and feeds signals into the user's hft stack
+  (https://github.com/357357user357357/hft); exchange-side market data and
+  order execution come from MCP/API capability packs such as
+  https://github.com/bybit-exchange/skills (prices, klines, orderbook in;
+  spot/derivatives execution out). Research track — after the runtime and
+  checkpoint story are stable
 - [ ] Multi-node launcher (optional): Kubernetes manifests for coord Service
   + workers Job with headless-DNS peer discovery — k8s may *launch* workers
   but must never be in the training topology (decentralization survives its

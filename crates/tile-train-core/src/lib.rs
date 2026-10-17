@@ -11,10 +11,12 @@ pub trait Op {
     fn name(&self) -> &'static str;
 }
 
+pub mod bit_linear;
 pub mod config;
 pub mod model;
 pub mod train;
 
+pub use bit_linear::BitLinear;
 pub use config::GptConfig;
 pub use model::TinyGpt;
 pub use train::{CheckpointMeta, StepLog};

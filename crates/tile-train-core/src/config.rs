@@ -16,6 +16,11 @@ pub struct GptConfig {
     pub n_embd: i64,
     /// Maximum context length (learned positional embeddings).
     pub block_size: i64,
+    /// Ternary (BitNet b1.58) weights for attention/MLP projections via STE
+    /// QAT. Embeddings and the LM head stay full precision. `#[serde(default)]`
+    /// keeps older checkpoint sidecars (pre-BitLinear) loadable.
+    #[serde(default)]
+    pub bit_linear: bool,
 }
 
 impl GptConfig {
@@ -38,6 +43,15 @@ impl GptConfig {
             n_head: 2,
             n_embd: 64,
             block_size: 32,
+            bit_linear: false,
+        }
+    }
+
+    /// Phase-3.x variant: same shape, ternary attention/MLP projections.
+    pub fn tiny_bit() -> Self {
+        Self {
+            bit_linear: true,
+            ..Self::tiny()
         }
     }
 }
@@ -63,5 +77,19 @@ mod tests {
     #[test]
     fn head_dim_divides() {
         assert_eq!(GptConfig::tiny().head_dim(), 32);
+    }
+
+    #[test]
+    fn bit_linear_flag_roundtrips_and_defaults_off() {
+        // Older sidecars without the field still deserialize (default off).
+        let legacy = r#"{"vocab_size":256,"n_layer":2,"n_head":2,"n_embd":64,"block_size":32}"#;
+        let back: GptConfig = serde_json::from_str(legacy).unwrap();
+        assert!(!back.bit_linear);
+
+        let cfg = GptConfig::tiny_bit();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: GptConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.bit_linear);
+        assert_eq!(cfg, back);
     }
 }

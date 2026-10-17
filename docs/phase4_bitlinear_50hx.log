@@ -1,0 +1,20 @@
+    Finished `release` profile [optimized] target(s) in 0.11s
+     Running `target/release/examples/bitlinear_ab`
+CUDA available — training on device 0
+[fp32] step    0  loss 6.516677
+[fp32] step  100  loss 0.010182
+[fp32] step  200  loss 0.003722
+[fp32] step  300  loss 0.002094
+[fp32] step  400  loss 0.001394
+[bit ] step    0  loss 6.498903
+[bit ] step  100  loss 0.009126
+[bit ] step  200  loss 0.003884
+[bit ] step  300  loss 0.002282
+[bit ] step  400  loss 0.001542
+
+=== A/B summary (500 steps, batch 64, lr 0.003, seed 42) ===
+fp32  projections: 6.516677 -> 0.001017
+ternary projections: 6.498903 -> 0.001138
+greedy continuation: fp32 16/16, ternary 16/16
+wrote out/bitlinear_ab.csv
+BITLINEAR-AB PASS: both arms learned the counting rule on CUDA

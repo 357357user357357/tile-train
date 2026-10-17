@@ -5,15 +5,45 @@
 //! final LN, and a tied-free LM head. Ops stay plain tch calls so Phase-2 can
 //! swap individual ops for tiled CubeCL kernels without touching the loop.
 
+use crate::bit_linear::BitLinear;
 use crate::config::GptConfig;
 use tch::nn::{self, embedding, linear, Linear, Module, Path};
 use tch::{Kind, Tensor};
 
+/// A projection that is either a plain fp32 `Linear` or a ternary
+/// `BitLinear` (b1.58, STE QAT), chosen once at build time from
+/// `GptConfig::bit_linear`. Both variants are normal `Module`s over the same
+/// shape, so the rest of the model is unchanged.
+#[derive(Debug)]
+enum Proj {
+    Fp(Linear),
+    Bit(BitLinear),
+}
+
+impl Proj {
+    fn new(p: &Path, in_dim: i64, out_dim: i64, bit: bool) -> Self {
+        if bit {
+            Proj::Bit(BitLinear::new(p, in_dim, out_dim))
+        } else {
+            Proj::Fp(linear(p, in_dim, out_dim, Default::default()))
+        }
+    }
+}
+
+impl Module for Proj {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        match self {
+            Proj::Fp(l) => xs.apply(l),
+            Proj::Bit(b) => xs.apply(b),
+        }
+    }
+}
+
 /// Multi-head causal self-attention.
 #[derive(Debug)]
 struct CausalSelfAttention {
-    qkv_proj: Linear,
-    out_proj: Linear,
+    qkv_proj: Proj,
+    out_proj: Proj,
     n_head: i64,
     head_dim: i64,
 }
@@ -21,8 +51,8 @@ struct CausalSelfAttention {
 impl CausalSelfAttention {
     fn new(p: &Path, cfg: &GptConfig) -> Self {
         Self {
-            qkv_proj: linear(p / "qkv_proj", cfg.n_embd, 3 * cfg.n_embd, Default::default()),
-            out_proj: linear(p / "out_proj", cfg.n_embd, cfg.n_embd, Default::default()),
+            qkv_proj: Proj::new(&(p / "qkv_proj"), cfg.n_embd, 3 * cfg.n_embd, cfg.bit_linear),
+            out_proj: Proj::new(&(p / "out_proj"), cfg.n_embd, cfg.n_embd, cfg.bit_linear),
             n_head: cfg.n_head,
             head_dim: cfg.head_dim(),
         }
@@ -60,15 +90,15 @@ impl Module for CausalSelfAttention {
 /// Position-wise MLP: expand 4x, GELU, project back.
 #[derive(Debug)]
 struct Mlp {
-    fc: Linear,
-    proj: Linear,
+    fc: Proj,
+    proj: Proj,
 }
 
 impl Mlp {
     fn new(p: &Path, cfg: &GptConfig) -> Self {
         Self {
-            fc: linear(p / "fc", cfg.n_embd, 4 * cfg.n_embd, Default::default()),
-            proj: linear(p / "proj", 4 * cfg.n_embd, cfg.n_embd, Default::default()),
+            fc: Proj::new(&(p / "fc"), cfg.n_embd, 4 * cfg.n_embd, cfg.bit_linear),
+            proj: Proj::new(&(p / "proj"), 4 * cfg.n_embd, cfg.n_embd, cfg.bit_linear),
         }
     }
 }

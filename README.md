@@ -53,6 +53,12 @@ CUDA arch flags: `sm_75` now, `sm_90` later (CUDA 12.4 on the dev box supports b
   replicas exactly synced, loss curve matches full-state baseline, optimizer
   state per rank 540672 / 1081344 bytes = **50.0%**.
   Run: `cargo run --release --example zero_tiny_gpt -p tile-dist -- --workers 2`
+- **Phase 4 — BitLinear b1.58 (1.58-bit QAT): DONE.** `bit_linear.rs`: ternary
+  weights {-1,0,+1} with absmean scale, straight-through estimator, fp32
+  master weights, behind `GptConfig::bit_linear`. A/B on the 50HX (identical
+  seed/data/steps): fp32 6.5167 → 0.00102, ternary 6.4989 → 0.00114, greedy
+  16/16 both — the 1.58-bit model learns as well at this scale.
+  Run: `cargo run --release --example bitlinear_ab -p tile-train-core`
 - ADRs: [0001 — backend strategy](docs/adr/0001-backend-strategy.md),
   [0002 — decentralized topology](docs/adr/0002-decentralized-training-topology.md)
 - [Roadmap](docs/ROADMAP.md)
