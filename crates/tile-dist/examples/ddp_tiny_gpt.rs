@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use std::net::TcpListener;
 use std::process::Command;
 use tile_dist::coord::{run_coord, CoordPlan};
-use tile_dist::worker::{run_worker, WorkerConfig};
+use tile_dist::worker::{run_worker, Mode, WorkerConfig};
 use tile_train_core::config::GptConfig;
 
 fn main() -> Result<()> {
@@ -26,6 +26,7 @@ fn main() -> Result<()> {
             lr: 3e-3,
             grad_clip: 1.0,
             seed: 42,
+            mode: Mode::Ddp,
         };
         let summary = run_worker(&cfg)?;
         println!("[worker {}] summary: {summary:?}", summary.rank);

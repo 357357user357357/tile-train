@@ -1,0 +1,40 @@
+    Finished `release` profile [optimized] target(s) in 0.22s
+     Running `target/release/examples/zero_tiny_gpt --workers 2 --steps 500 --baseline /tmp/zero1_base2.json`
+[coord] listening on 127.0.0.1:9124, expecting 2 workers, 500 steps (ZeRO-1)
+[worker] rank 0/2 starting, device=Cuda(0), mode=Zero1
+[worker] rank 1/2 starting, device=Cuda(0), mode=Zero1
+[coord] step    0  mean loss 6.519457
+[coord] step   50  mean loss 0.040277
+[coord] step  100  mean loss 0.009173
+[coord] step  150  mean loss 0.005023
+[coord] step  200  mean loss 0.003335
+[coord] step  250  mean loss 0.002430
+[coord] step  300  mean loss 0.001900
+[coord] step  350  mean loss 0.001498
+[coord] step  400  mean loss 0.001222
+[coord] step  450  mean loss 0.001042
+[worker] rank 1 done, last loss 0.000906
+[worker 1] summary: WorkerSummary { rank: 1, last_loss: 0.0009060573647730052, checksum: 19431.87104795171 }
+[worker 0] greedy continuation: 16/16 correct
+[worker] rank 0 done, last loss 0.000912
+[worker 0] summary: WorkerSummary { rank: 0, last_loss: 0.0009118721354752779, checksum: 19431.87104795171 }
+[coord] checksums: [19431.87104795171, 19431.87104795171]  replicas_synced=true
+[coord] opt state: 1081344 bytes owned vs 2162688 full across 2 rank(s) (50.0% of full)
+
+[coord] mean loss 6.519457 -> 0.000909 over 500 steps
+[coord] checksums: [19431.87104795171, 19431.87104795171]
+[coord] rank 0 opt state: 540672 / 1081344 bytes
+[coord] rank 1 opt state: 540672 / 1081344 bytes
+[coord] baseline match: all 500 losses within 1e-4 relative
+PHASE-3.2 PASS (ZeRO-1): 2 worker(s) trained with ShardId-addressed optimizer state; replicas synced exactly, loss curve matches full-state baseline
+
+================================================================================
+Cross-mode comparison (same seeds/batches, 2 workers, 500 steps, CMP 50HX CUDA)
+  DDP    (Phase 3, tch AdamW, full opt state) : 6.519457 -> 0.000909, checksum 19431.8718788051
+  ZeRO-1 (ShardId sharded AdamW)              : 6.519457 -> 0.000909, checksum 19431.87104795171
+  Checksums agree to 5e-5 relative (different AdamW implementations); identical
+  loss curves. Optimizer-state memory per rank: 540672 / 1081344 bytes = 50.0%.
+Determinism: rerun of the 2-worker ZeRO-1 run reproduces all 500 losses within
+1e-4 relative (gate in examples/zero_tiny_gpt.rs --baseline).
+Note: loss curves are only comparable across runs with the SAME worker count
+(the coord reports the mean over per-rank minibatch losses).

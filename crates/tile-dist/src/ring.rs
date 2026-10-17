@@ -7,6 +7,7 @@
 //! no rank ever acts as a server for the others — the decentralization
 //! property we need before gossip replaces the ring (§3).
 
+use crate::shard::contiguous_ranges;
 use anyhow::{Context, Result};
 use std::net::{TcpListener, TcpStream};
 
@@ -68,15 +69,9 @@ impl Ring {
             anyhow::bail!("ring: buffer of {} elements too small for {} ranks", buf.len(), n);
         }
         // Chunk c (possibly uneven for the last chunks), precomputed so the
-        // exchange loop owns no borrow of `buf`.
-        let ranges: Vec<(usize, usize)> = (0..n)
-            .map(|c| {
-                let base = buf.len() / n;
-                let rem = buf.len() % n;
-                let start = c * base + c.min(rem);
-                (start, start + base + if c < rem { 1 } else { 0 })
-            })
-            .collect();
+        // exchange loop owns no borrow of `buf`. Same layout as
+        // `shard::contiguous_ranges` — chunk c belongs to rank c.
+        let ranges: Vec<(usize, usize)> = contiguous_ranges(buf.len(), n);
 
         // ---- reduce-scatter: send (rank - i) % n, recv-add (rank - i - 1) % n
         for i in 1..n {
@@ -116,16 +111,8 @@ impl Ring {
         add: bool,
     ) -> Result<()> {
         let (s, e) = ranges[send_c];
-        let outgoing: Vec<f32> = buf[s..e].to_vec();
-        let bytes = f32_slice_as_bytes(&outgoing);
-        let mut next = self.next.try_clone().context("cloning ring socket")?;
-        let sender = std::thread::spawn(move || crate::frame::send_frame(&mut next, &bytes));
-        let incoming = crate::frame::recv_frame(&mut self.prev)?;
         let (rs, re) = ranges[recv_c];
-        let got: Vec<f32> = incoming
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
+        let got = self.exchange_var(&buf[s..e])?;
         anyhow::ensure!(
             got.len() == re - rs,
             "ring: chunk size mismatch: got {}, expected {}",
@@ -139,8 +126,51 @@ impl Ring {
         } else {
             buf[rs..re].copy_from_slice(&got);
         }
-        sender.join().map_err(|_| anyhow::anyhow!("ring sender panicked"))??;
         Ok(())
+    }
+
+    /// One variable-length ring step: send `buf` to `next`, receive whatever
+    /// `prev` sends (any length). Used by `all_gather_var`, where shards have
+    /// different sizes.
+    fn exchange_var(&mut self, buf: &[f32]) -> Result<Vec<f32>> {
+        let outgoing: Vec<f32> = buf.to_vec();
+        let bytes = f32_slice_as_bytes(&outgoing);
+        let mut next = self.next.try_clone().context("cloning ring socket")?;
+        let sender = std::thread::spawn(move || crate::frame::send_frame(&mut next, &bytes));
+        let incoming = crate::frame::recv_frame(&mut self.prev)?;
+        sender.join().map_err(|_| anyhow::anyhow!("ring sender panicked"))??;
+        let got: Vec<f32> = incoming
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        Ok(got)
+    }
+
+    /// Variable-length all-gather: every rank contributes a differently
+    /// sized f32 buffer (e.g. its updated parameter shard) and receives all
+    /// contributions. Returns `result[src]` = rank `src`'s buffer (including
+    /// this rank's own, at index `rank`).
+    ///
+    /// Relay algorithm: each step a rank forwards exactly what it just
+    /// received, so after n-1 steps every buffer has been relayed once around
+    /// the ring; the source of each received buffer is known arithmetically
+    /// (`(rank + n - i) % n`), so no metadata travels on the wire.
+    pub fn all_gather_var(&mut self, mine: &[f32]) -> Result<Vec<Vec<f32>>> {
+        let n = self.size;
+        let mut out: Vec<Option<Vec<f32>>> = (0..n).map(|_| None).collect();
+        out[self.rank] = Some(mine.to_vec());
+        let mut sendbuf: Vec<f32> = mine.to_vec();
+        for i in 1..n {
+            let got = self.exchange_var(&sendbuf)?;
+            let src = (self.rank + n - i) % n;
+            anyhow::ensure!(
+                out[src].is_none(),
+                "ring: all_gather_var received shard {src} twice"
+            );
+            out[src] = Some(got.clone());
+            sendbuf = got;
+        }
+        Ok(out.into_iter().map(|s| s.expect("every shard filled")).collect())
     }
 }
 
@@ -214,6 +244,37 @@ mod tests {
         let out = run_ring(3, bufs);
         for buf in out {
             assert_eq!(buf, reference);
+        }
+    }
+
+    #[test]
+    fn all_gather_var_returns_every_shard_at_right_index() {
+        // Variable-length shards: rank r contributes r+1 elements.
+        let shards: Vec<Vec<f32>> = (0..3)
+            .map(|r| vec![r as f32 + 1.0; r + 1])
+            .collect();
+        let listeners: Vec<TcpListener> =
+            (0..3).map(|_| TcpListener::bind("127.0.0.1:0").unwrap()).collect();
+        let addrs: Vec<String> = listeners
+            .iter()
+            .map(|l| l.local_addr().unwrap().to_string())
+            .collect();
+        let handles: Vec<_> = (0..3)
+            .map(|rank| {
+                let listener = listeners[rank].try_clone().unwrap();
+                let addrs = addrs.clone();
+                let mine = shards[rank].clone();
+                std::thread::spawn(move || {
+                    let mut ring = Ring::connect(rank, 3, listener, &addrs).unwrap();
+                    ring.all_gather_var(&mine).unwrap()
+                })
+            })
+            .collect();
+        for out in handles.into_iter().map(|h| h.join().unwrap()) {
+            assert_eq!(out.len(), 3);
+            for (src, shard) in out.iter().enumerate() {
+                assert_eq!(shard, &shards[src], "wrong shard at index {src}");
+            }
         }
     }
 }

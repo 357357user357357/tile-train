@@ -7,6 +7,7 @@
 use crate::frame::{recv_msg, send_msg};
 use crate::proto::ControlMsg;
 use crate::ring::Ring;
+use crate::zero::{AdamWCfg, ShardedAdamW};
 use anyhow::{bail, Context, Result};
 use std::net::TcpStream;
 use tch::kind::Kind::Int64;
@@ -16,6 +17,16 @@ use tile_train_core::config::GptConfig;
 use tile_train_core::model::TinyGpt;
 use tile_train_core::train::adamw;
 use tile_train_core::ensure_cuda_backend;
+
+/// Parallelism mode for this run (ADR-0002 §2 increments).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Plain DDP: full optimizer state on every rank (Phase 3).
+    Ddp,
+    /// ZeRO-1: AdamW state sharded across the ring, updated params
+    /// all-gathered each step.
+    Zero1,
+}
 
 /// Worker settings.
 #[derive(Debug, Clone)]
@@ -31,6 +42,7 @@ pub struct WorkerConfig {
     /// per rank (reseeded rank-dependently after init) so every rank sees a
     /// different minibatch and the all-reduce average does real work.
     pub seed: i64,
+    pub mode: Mode,
 }
 
 /// Worker-side result of a run.
@@ -60,13 +72,15 @@ pub fn run_worker(cfg: &WorkerConfig) -> Result<WorkerSummary> {
         other => bail!("worker: expected Assign, got {other:?}"),
     };
     let (rank, size, peer_addrs) = assign;
-    println!("[worker] rank {rank}/{size} starting, device={:?}", cfg.device);
+    println!(
+        "[worker] rank {rank}/{size} starting, device={:?}, mode={:?}",
+        cfg.device, cfg.mode
+    );
 
     // ---- model replica ------------------------------------------------------
     tch::manual_seed(cfg.seed);
     let vs = VarStore::new(cfg.device);
     let model = TinyGpt::new(&vs.root(), &cfg.model);
-    let mut opt = adamw(&vs, cfg.lr)?;
 
     // Deterministic parameter order (sorted by name) so every rank packs
     // gradients into byte-identical buffers.
@@ -79,6 +93,25 @@ pub fn run_worker(cfg: &WorkerConfig) -> Result<WorkerSummary> {
     let total: usize = sizes.iter().sum();
     let mut grad_buf: Vec<f32> = vec![0.0; total];
     let param_tensors: Vec<Tensor> = params.iter().map(|(_, t)| t.shallow_clone()).collect();
+
+    // Optimizer: full AdamW (DDP) or ZeRO-1 sharded AdamW. Only one exists
+    // per mode; the unused side stays None.
+    let names_dims: Vec<(String, Vec<i64>)> =
+        params.iter().map(|(n, t)| (n.clone(), t.size())).collect();
+    let mut sharded_opt = match cfg.mode {
+        Mode::Ddp => None,
+        Mode::Zero1 => Some(ShardedAdamW::new(
+            &names_dims,
+            rank,
+            size,
+            AdamWCfg { lr: cfg.lr, ..AdamWCfg::default() },
+            cfg.device,
+        )?),
+    };
+    let mut opt = match cfg.mode {
+        Mode::Ddp => Some(adamw(&vs, cfg.lr)?),
+        Mode::Zero1 => None,
+    };
 
     // ---- ring ---------------------------------------------------------------
     let mut ring = if size > 1 {
@@ -98,20 +131,62 @@ pub fn run_worker(cfg: &WorkerConfig) -> Result<WorkerSummary> {
     loop {
         match recv_msg(&mut coord_stream).context("worker: reading next control msg")? {
             ControlMsg::Step { step } => {
-                opt.zero_grad();
                 let (xs, targets) = counting_batch(&cfg.model, cfg.batch, cfg.device);
                 let loss = model.forward_loss(&xs, &targets);
-                loss.backward();
+                match cfg.mode {
+                    Mode::Ddp => {
+                        let opt = opt.as_mut().expect("DDP mode has a tch optimizer");
+                        opt.zero_grad();
+                        loss.backward();
 
-                // Pack local grads (missing grads stay zero), all-reduce avg,
-                // write back as the gradient the optimizer will apply.
-                pack_grads(&params, &sizes, &mut grad_buf)?;
-                if let Some(r) = ring.as_mut() {
-                    r.all_reduce_avg(&mut grad_buf)?;
+                        // Pack local grads (missing grads stay zero), all-reduce avg,
+                        // write back as the gradient the optimizer will apply.
+                        pack_grads(&params, &sizes, &mut grad_buf)?;
+                        if let Some(r) = ring.as_mut() {
+                            r.all_reduce_avg(&mut grad_buf)?;
+                        }
+                        set_grads(&params, &sizes, &grad_buf, cfg.device)?;
+                        tile_train_core::train::clip_grad_norm(opt, &param_tensors, cfg.grad_clip);
+                        opt.step();
+                    }
+                    Mode::Zero1 => {
+                        // No tch optimizer here: clear stale grads by hand so
+                        // backward does not accumulate across steps.
+                        for (_, p) in &params {
+                            let mut g = p.grad();
+                            if g.defined() {
+                                let _ = g.zero_();
+                            }
+                        }
+                        loss.backward();
+
+                        // ZeRO-1 needs every gradient — a missing one would
+                        // silently become a zero shard update and break the
+                        // all-gather equivalence.
+                        pack_grads_strict(&params, &sizes, &mut grad_buf)?;
+                        if let Some(r) = ring.as_mut() {
+                            r.all_reduce_avg(&mut grad_buf)?;
+                            // Clip at the same point DDP does: after
+                            // averaging, before the optimizer step.
+                            clip_buffer(&mut grad_buf, cfg.grad_clip);
+                            let so = sharded_opt.as_mut().expect("ZeRO-1 mode has a sharded optimizer");
+                            so.step(&params, &grad_buf)?;
+                            // All-gather updated parameter shards so every
+                            // rank holds the full post-step params again.
+                            let mine = so.pack_owned_params(&params)?;
+                            let chunks = r.all_gather_var(&mine)?;
+                            so.write_gathered(&params, &chunks)?;
+                        } else {
+                            // size == 1: sharded opt degenerates to a full
+                            // AdamW; no ring traffic.
+                            clip_buffer(&mut grad_buf, cfg.grad_clip);
+                            sharded_opt
+                                .as_mut()
+                                .expect("ZeRO-1 mode has a sharded optimizer")
+                                .step(&params, &grad_buf)?;
+                        }
+                    }
                 }
-                set_grads(&params, &sizes, &grad_buf, cfg.device)?;
-                tile_train_core::train::clip_grad_norm(&mut opt, &param_tensors, cfg.grad_clip);
-                opt.step();
 
                 last_loss = loss.double_value(&[]);
                 send_msg(
@@ -134,6 +209,21 @@ pub fn run_worker(cfg: &WorkerConfig) -> Result<WorkerSummary> {
     let mut flat = vec![0.0f32; total];
     pack_params(&params, &sizes, &mut flat)?;
     let checksum: f64 = flat.iter().map(|v| (*v as f64) * (*v as f64)).sum();
+
+    // Memory report: ZeRO-1 evidence (owned vs full optimizer state bytes).
+    let (owned_b, full_b) = match &sharded_opt {
+        Some(so) => (so.owned_bytes(), so.full_bytes()),
+        // DDP keeps the full state on every rank.
+        None => ((total as u64) * 4 * 2, (total as u64) * 4 * 2),
+    };
+    send_msg(
+        &mut coord_stream,
+        &ControlMsg::MemReport {
+            rank,
+            opt_state_bytes: owned_b,
+            opt_state_bytes_full: full_b,
+        },
+    )?;
     send_msg(&mut coord_stream, &ControlMsg::ParamCheck { rank, checksum })?;
     println!("[worker] rank {rank} done, last loss {last_loss:.6}");
 
@@ -166,6 +256,38 @@ fn pack_params(params: &[(String, Tensor)], sizes: &[usize], buf: &mut [f32]) ->
         off += n;
     }
     Ok(())
+}
+
+/// Pack gradients of all params into `buf`, bailing if any param lacks a
+/// gradient. ZeRO-1 reads updates straight from this buffer, so a missing
+/// grad would silently become a zero shard update and break the exact
+/// equivalence between sharded and full runs.
+fn pack_grads_strict(params: &[(String, Tensor)], sizes: &[usize], buf: &mut [f32]) -> Result<()> {
+    let mut off = 0usize;
+    for ((name, p), &n) in params.iter().zip(sizes) {
+        let g = p.grad();
+        if !g.defined() {
+            bail!("worker: param '{name}' has no gradient (ZeRO-1 needs every grad)");
+        }
+        let g_cpu = g.to_device(Device::Cpu).reshape([-1]);
+        g_cpu.copy_data(&mut buf[off..off + n], n);
+        off += n;
+    }
+    Ok(())
+}
+
+/// Scale `buf` in place so its global L2 norm is at most `max` (no-op if
+/// already below). Same semantics as `core::train::clip_grad_norm`, but on
+/// the packed buffer — the sharded optimizer reads grads from here, not
+/// from the variables.
+fn clip_buffer(buf: &mut [f32], max: f64) {
+    let norm: f64 = buf.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>().sqrt();
+    if norm > max && norm > 0.0 {
+        let scale = (max / norm) as f32;
+        for v in buf.iter_mut() {
+            *v *= scale;
+        }
+    }
 }
 
 /// Write averaged gradients back onto the variables for the optimizer step.

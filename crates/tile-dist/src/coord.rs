@@ -28,6 +28,9 @@ pub struct TrainSummary {
     /// True when every rank's checksum matches to f64 tolerance — proof the
     /// ring all-reduce + identical optimizer steps kept replicas bit-close.
     pub replicas_synced: bool,
+    /// Optimizer-state memory per rank: (bytes owned, bytes a full state
+    /// would need). With ZeRO-1 sharding owned < full; identical on DDP.
+    pub mem: Vec<(u64, u64)>,
 }
 
 /// Run the coordinator on an already-bound listener until training completes.
@@ -95,6 +98,18 @@ pub fn run_coord(plan: CoordPlan, listener: TcpListener) -> Result<TrainSummary>
         send_msg(stream, &ControlMsg::Done)
             .with_context(|| format!("coord: sending Done to rank {rank}"))?;
     }
+    // Memory reports (ZeRO-1 evidence), then checksums, in that order.
+    let mut mem = Vec::with_capacity(plan.size);
+    for (rank, stream) in streams.iter_mut().enumerate() {
+        match recv_msg(stream)
+            .with_context(|| format!("coord: reading MemReport from rank {rank}"))?
+        {
+            ControlMsg::MemReport { opt_state_bytes, opt_state_bytes_full, .. } => {
+                mem.push((opt_state_bytes, opt_state_bytes_full))
+            }
+            other => bail!("coord: expected MemReport from rank {rank}, got {other:?}"),
+        }
+    }
     let mut checksums = Vec::with_capacity(plan.size);
     for (rank, stream) in streams.iter_mut().enumerate() {
         match recv_msg(stream)
@@ -118,9 +133,16 @@ pub fn run_coord(plan: CoordPlan, listener: TcpListener) -> Result<TrainSummary>
              per-rank minibatches are not diverging, gradient averaging is a no-op"
         );
     }
-    Ok(TrainSummary {
-        mean_losses,
-        checksums,
-        replicas_synced,
-    })
+    let (owned, full): (u64, u64) =
+        mem.iter().copied().fold((0, 0), |(a, b), (o, f)| (a + o, b + f));
+    if full > 0 {
+        println!(
+            "[coord] opt state: {} bytes owned vs {} full across {} rank(s) ({:.1}% of full)",
+            owned,
+            full,
+            plan.size,
+            100.0 * owned as f64 / full as f64
+        );
+    }
+    Ok(TrainSummary { mean_losses, checksums, replicas_synced, mem })
 }

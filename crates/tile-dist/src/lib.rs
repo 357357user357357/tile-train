@@ -17,14 +17,16 @@
 //!   verifies with a parameter checksum at the end.
 //!
 //! Later phases reuse the same addressing: grads, params and optimizer state
-//! all become `ShardId`s (ADR-0002 §2), and the ring becomes a K-trajectory
-//! gossip among untrusting peers (§3).
+//! all become `ShardId`s, and the ring becomes a K-trajectory gossip among
+//! untrusting peers (§3).
 
 pub mod coord;
 pub mod frame;
 pub mod proto;
 pub mod ring;
+pub mod shard;
 pub mod worker;
+pub mod zero;
 
 /// Errors surfaced to callers.
 pub use anyhow::Result;

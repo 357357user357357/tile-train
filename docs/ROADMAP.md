@@ -28,8 +28,26 @@
   protocol, data-parallel replicas; 2 worker processes verified on the 50HX
   (loss 6.5 → 0.00097, bit-identical replica checksums, 16/16 greedy).
   Evidence: `docs/phase3_ddp_50hx.log`
-- [ ] Sharded data parallel (ZeRO-style param/grad/opt-state sharding via
-  `ShardId` addressing) — next
+- [x] **ZeRO-1: sharded optimizer state via `ShardId` addressing** —
+  `zero.rs` (sharded AdamW, axis-0 `ShardId` shards) + variable-length ring
+  all-gather; unit tests prove size=1 ≡ size=3 **bitwise**; 2-worker run on
+  the 50HX: replicas exactly synced, loss curve identical to full-state
+  baseline, opt state 540672 / 1081344 bytes = 50.0% per rank.
+  Evidence: `docs/phase3_zero1_50hx.log`
+- [ ] ZeRO-2: reduce-scatter gradients instead of full all-reduce (grad
+  memory ÷ N); reuses the same `ShardId` + ring primitives
+- [ ] Muon optimizer (momentum + Newton–Schulz orthogonalization of 2D
+  updates; AdamW for 1D params). Fits the ring: momentum is all-reduced in
+  full, NS is deterministic → every rank computes the same orthogonalized
+  update, param shards all-gather as in ZeRO-1
+- [ ] BitLinear b1.58 (ternary {-1,0,+1} weights, absmean scale, STE QAT,
+  fp32 master weights) — memory *and* ring-traffic win; follow-up: 1-bit
+  gradient compression for the all-reduce (1-bit-SGD/PowerSGD style)
+- [ ] Lorentz-metric experiment (hyperbolic distances via Minkowski form,
+  e.g. for embeddings) — flagged A/B, keep only if the loss curve justifies it
+- [ ] Model modernization flags (modded-nanogpt practices, each A/B-measured
+  on the 50HX): RoPE, QK-norm, zero-init out projections, ReLU² MLP, logit
+  softcapping, value embeddings/residual
 - [ ] Multi-GPU on one node (ring over CUDA IPC/P2P instead of loopback TCP)
 - [ ] Tensor parallel attention/MLP (tile-style sharding)
 - [ ] Decentralized training track: K-trajectory gossip for trustless peers;
@@ -40,3 +58,7 @@
   (a hung worker currently hangs the run); listen-host as a parameter before
   leaving loopback
 - [ ] Paged KV + inference interop with TileRT (shared checkpoint format)
+- [ ] Multi-node launcher (optional): Kubernetes manifests for coord Service
+  + workers Job with headless-DNS peer discovery — k8s may *launch* workers
+  but must never be in the training topology (decentralization survives its
+  disappearance; ADR-0002 §3)

@@ -46,6 +46,13 @@ CUDA arch flags: `sm_75` now, `sm_90` later (CUDA 12.4 on the dev box supports b
   replicas — 2 worker processes on the 50HX, loss 6.5 → 0.00097, replica
   checksums bit-identical, no NCCL, no parameter server (ADR-0002).
   Run: `cargo run --release --example ddp_tiny_gpt -p tile-dist -- --workers 2`
+- **Phase 3 — ZeRO-1 sharded optimizer state: DONE.** `ShardId` addressing
+  (`shard.rs`) + sharded AdamW (`zero.rs`): each rank owns 1/N of the AdamW
+  state, updated parameter shards are all-gathered over the ring each step.
+  Unit tests prove sharded ≡ full **bitwise**; 2-worker run on the 50HX:
+  replicas exactly synced, loss curve matches full-state baseline, optimizer
+  state per rank 540672 / 1081344 bytes = **50.0%**.
+  Run: `cargo run --release --example zero_tiny_gpt -p tile-dist -- --workers 2`
 - ADRs: [0001 — backend strategy](docs/adr/0001-backend-strategy.md),
   [0002 — decentralized topology](docs/adr/0002-decentralized-training-topology.md)
 - [Roadmap](docs/ROADMAP.md)

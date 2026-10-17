@@ -28,6 +28,10 @@ pub enum ControlMsg {
     /// final step — coord asserts all ranks match, proving ring all-reduce
     /// kept replicas bit-identical.
     ParamCheck { rank: usize, checksum: f64 },
+    /// Worker → coord: optimizer-state memory report (ZeRO-1 evidence).
+    /// `opt_state_bytes` = bytes of AdamW state this rank actually holds,
+    /// `opt_state_bytes_full` = bytes a full (unsharded) state would need.
+    MemReport { rank: usize, opt_state_bytes: u64, opt_state_bytes_full: u64 },
 }
 
 /// Header of a raw tensor payload on the data plane (grads / params / opt
